@@ -189,10 +189,15 @@ func (e ErrServerSessionLinkedToOtherConn) Error() string {
 }
 
 // ErrServerInvalidSession is an error that can be returned by a server.
-type ErrServerInvalidSession struct{}
+type ErrServerInvalidSession struct {
+	Err error
+}
 
 // Error implements the error interface.
 func (e ErrServerInvalidSession) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("invalid session: %v", e.Err)
+	}
 	return "invalid session"
 }
 

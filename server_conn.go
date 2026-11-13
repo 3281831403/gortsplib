@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	gourl "net/url"
 	"slices"
@@ -20,11 +21,27 @@ import (
 	"github.com/bluenviron/gortsplib/v5/pkg/liberrors"
 )
 
-func getSessionID(header base.Header) string {
-	if h, ok := header["Session"]; ok && len(h) == 1 {
-		return h[0]
+// getSessionID extracts the session id from the Session header.
+// It returns the id, a boolean that is false when the header is present
+// but has an invalid syntax, and an error describing the syntax error.
+// Parameters like ";timeout=55" and leading or trailing spaces are ignored.
+func getSessionID(header base.Header) (string, bool, error) {
+	v, ok := header["Session"]
+	if !ok {
+		return "", true, nil
 	}
-	return ""
+
+	if len(v) != 1 {
+		return "", false, fmt.Errorf("value provided multiple times (%v)", v)
+	}
+
+	var sx headers.Session
+	err := sx.Unmarshal(v)
+	if err != nil {
+		return "", false, err
+	}
+
+	return sx.Session, true, nil
 }
 
 func checkMulticastEnabled(multicastIPRange string, query string) bool {
@@ -276,7 +293,12 @@ func (sc *ServerConn) handleRequestInner(req *base.Request) (*base.Response, err
 		}, liberrors.ErrServerInvalidPath{}
 	}
 
-	sxID := getSessionID(req.Header)
+	sxID, sxValid, sxErr := getSessionID(req.Header)
+	if !sxValid {
+		return &base.Response{
+			StatusCode: base.StatusBadRequest,
+		}, liberrors.ErrServerInvalidSession{Err: sxErr}
+	}
 
 	var path string
 	var query string
@@ -455,6 +477,17 @@ func (sc *ServerConn) handleRequestOuter(req *base.Request) error {
 		res.Header = make(base.Header)
 	}
 
+	// session-related rejections only fail the current request:
+	// the connection must remain open, so that the client can keep
+	// sending requests and eventually create a new session.
+	if _, ok := errors.AsType[liberrors.ErrServerInvalidSession](err); ok {
+		err = nil
+	} else if _, ok := errors.AsType[liberrors.ErrServerSessionNotFound](err); ok {
+		err = nil
+	} else if _, ok := errors.AsType[liberrors.ErrServerLinkedToOtherSession](err); ok {
+		err = nil
+	}
+
 	// handle auth errors
 	if _, ok := errors.AsType[liberrors.ErrServerAuth](err); ok {
 		err = sc.handleAuthError(req, res)
@@ -497,9 +530,12 @@ func (sc *ServerConn) handleRequestInSession(
 		})
 		if err != nil {
 			if _, ok := errors.AsType[liberrors.ErrServerSessionNotFound](err); ok {
+				// the session does not exist (yet or anymore).
+				// reply with 454 but keep the connection alive, so that the
+				// client can start a new session on the same TCP connection.
 				return &base.Response{
 					StatusCode: base.StatusSessionNotFound,
-				}, err
+				}, nil
 			}
 
 			return &base.Response{

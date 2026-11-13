@@ -41,6 +41,31 @@ var casesSession = []struct {
 			Timeout: new(uint(47)),
 		},
 	},
+	{
+		"with leading space",
+		base.HeaderValue{` A3eqwsafq3rFASqew`},
+		base.HeaderValue{`A3eqwsafq3rFASqew`},
+		headers.Session{
+			Session: "A3eqwsafq3rFASqew",
+		},
+	},
+	{
+		"with trailing space",
+		base.HeaderValue{`A3eqwsafq3rFASqew `},
+		base.HeaderValue{`A3eqwsafq3rFASqew`},
+		headers.Session{
+			Session: "A3eqwsafq3rFASqew",
+		},
+	},
+	{
+		"with timeout and surrounding spaces",
+		base.HeaderValue{` A3eqwsafq3rFASqew ; timeout=47 `},
+		base.HeaderValue{`A3eqwsafq3rFASqew;timeout=47`},
+		headers.Session{
+			Session: "A3eqwsafq3rFASqew",
+			Timeout: new(uint(47)),
+		},
+	},
 }
 
 func TestSessionUnmarshal(t *testing.T) {
@@ -91,6 +116,25 @@ func TestSessionAdditionalErrors(t *testing.T) {
 	func() {
 		var h headers.Session
 		err := h.Unmarshal(base.HeaderValue{"a", "b"})
+		require.Error(t, err)
+	}()
+
+	for _, v := range []string{
+		"",
+		" ",
+		";timeout=55",
+		" ;timeout=55",
+	} {
+		func() {
+			var h headers.Session
+			err := h.Unmarshal(base.HeaderValue{v})
+			require.Error(t, err)
+		}()
+	}
+
+	func() {
+		var h headers.Session
+		err := h.Unmarshal(base.HeaderValue{`A3eqwsafq3rFASqew;timeout=abc`})
 		require.Error(t, err)
 	}()
 }
